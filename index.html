@@ -1086,37 +1086,93 @@ async function saveFirebaseConfig() {
 // ══════════════════════════════════════════════════════════════
 const _originalGD = typeof GD === 'function' ? GD : null;
 
+// ── DRIVE CAPTACIÓN CONFIG ──────────────────────────────
+const RAILWAY_API = 'https://azkar-presupuestos-production.up.railway.app';
+
+async function getDriveNextNumber() {
+  try {
+    const res = await fetch(RAILWAY_API + '/api/drive/captacion/next-number');
+    const data = await res.json();
+    if (data.success) return data.nextNumber;
+    console.error('[Drive] Error:', data.error);
+    return null;
+  } catch (e) {
+    console.error('[Drive] Fetch error:', e);
+    return null;
+  }
+}
+
+async function createDriveFolder(number) {
+  try {
+    const res = await fetch(RAILWAY_API + '/api/drive/captacion/create-folder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ number: number })
+    });
+    const data = await res.json();
+    return data;
+  } catch (e) {
+    console.error('[Drive] Create folder error:', e);
+    return null;
+  }
+}
+
 window.GD = async function() {
-  // Call original GD save (downloads HTML with embedded JSON)
-  // if (_originalGD) _originalGD();
-  
+  const btn = document.querySelector('.nbtn.sav');
+
   // Also persist to IndexedDB
   const data = collectFormData();
-  const ref = data.f_ref || ('PRE-' + Date.now());
+  let ref = data.f_ref;
+
+  // Si no tiene referencia (número de cliente), pedir a Drive el siguiente
+  if (!ref || ref.trim() === '') {
+    if (btn) { btn.innerHTML = '🔄 Obteniendo nº...'; btn.style.background = '#b36b00'; }
+
+    const nextNum = await getDriveNextNumber();
+    if (nextNum) {
+      ref = String(nextNum);
+      // Poner el número en el campo de referencia
+      const refField = document.getElementById('f_ref');
+      if (refField) refField.value = ref;
+      data.f_ref = ref;
+
+      // Crear la carpeta en Drive
+      if (btn) btn.innerHTML = '📁 Creando carpeta...';
+      const folderResult = await createDriveFolder(nextNum);
+      if (folderResult && folderResult.success) {
+        showSyncStatus('📁 Carpeta ' + ref + ' creada en Drive');
+      } else {
+        showSyncStatus('⚠ Nº asignado pero error creando carpeta', 4000);
+      }
+    } else {
+      ref = 'PRE-' + Date.now();
+      showSyncStatus('⚠ Sin conexión a Drive, referencia temporal', 4000);
+    }
+  }
+
   data.id = ref;
-  
+
   try {
     await savePresupuesto(data);
-    
+
     // Sync to Firebase if configured
     if (firebaseConfigured && window._fb) {
       await window._fb.setDoc(window._fb.doc(window._fb.db, 'presupuestos', ref), data);
-      showSyncStatus('✓ Guardado y sincronizado');
+      showSyncStatus('✓ Guardado y sincronizado (Nº ' + ref + ')');
     } else {
-      showSyncStatus('💾 Guardado localmente');
+      showSyncStatus('💾 Guardado localmente (Nº ' + ref + ')');
     }
   } catch (e) {
     console.error('[Azkar] Error guardando:', e);
     showSyncStatus('⚠ Error al guardar', 4000);
   }
-  
+
   // Visual feedback
-  const btn = document.querySelector('.nbtn.sav');
   if (btn) {
     const o = btn.innerHTML;
-    btn.innerHTML = '✓ Guardado!';
+    btn.innerHTML = '✓ Guardado! (Nº ' + ref + ')';
     btn.style.background = '#0d5c2e';
-    setTimeout(() => { btn.innerHTML = o; btn.style.background = ''; }, 2500);
+    setTimeout(() => { btn.innerHTML = o; btn.style.background = ''; }, 3000);
   }
 };
 
