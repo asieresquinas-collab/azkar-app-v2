@@ -596,13 +596,8 @@ function AUTO_INIT(){
   var fd=document.getElementById('f_fecha');
   if(fd&&!fd.value) fd.value=new Date().toISOString().slice(0,10);
 
-  // Nº presupuesto automático
-  var fref=document.getElementById('f_ref');
-  if(fref&&!fref.value){
-    var yr=new Date().getFullYear(), key='azkar_ref_'+yr, cnt=1;
-    try{cnt=parseInt(localStorage.getItem(key)||'0')+1; localStorage.setItem(key,cnt);}catch(e){}
-    fref.value='PRE-'+yr+'-'+String(cnt).padStart(3,'0');
-  }
+  // Nº presupuesto: ya NO se auto-genera aquí (se obtiene de Drive en newPresupuesto)
+  // El campo f_ref se rellena desde getDriveNextNumber() al pulsar "+ Nuevo"
 
   // Fila: Tipo servicio + Comercial + Forma de pago
   var g4=document.querySelector('#page-presupuesto .fg.g4');
@@ -1021,7 +1016,7 @@ async function loadPresupuesto(id) {
   showSyncStatus('📄 Presupuesto cargado');
 }
 
-function newPresupuesto() {
+async function newPresupuesto() {
   // Reset form
   const fields = ['f_ref','f_nc','f_fecha','f_dni','f_nom','f_tel','f_email','f_rec','f_ent','f_fac','f_fserv','f_obs'];
   fields.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -1029,7 +1024,24 @@ function newPresupuesto() {
   if (typeof AUTO_INIT === 'function') AUTO_INIT();
   closeMgr();
   if (typeof ST === 'function') ST('presupuesto');
-  showSyncStatus('📝 Nuevo presupuesto');
+
+  // Asignar número de cliente automáticamente desde Drive
+  showSyncStatus('🔄 Obteniendo nº de cliente...');
+  const refField = document.getElementById('f_ref');
+  try {
+    const driveInfo = await getDriveNextNumber();
+    if (driveInfo && driveInfo.nextNumber) {
+      refField.value = String(driveInfo.nextNumber);
+      // Guardar info de Drive para usarla al guardar (needsCreate, folderId)
+      window._driveInfo = driveInfo;
+      showSyncStatus('📝 Nuevo presupuesto — Nº cliente: ' + driveInfo.nextNumber);
+    } else {
+      showSyncStatus('⚠ No se pudo obtener nº de Drive, ponlo manualmente', 4000);
+    }
+  } catch (e) {
+    console.error('[Drive] Error al obtener número:', e);
+    showSyncStatus('⚠ Sin conexión a Drive, pon el nº manualmente', 4000);
+  }
 }
 
 async function delPresupuesto(id) {
@@ -1174,55 +1186,39 @@ async function saveToDrive(number, clientName, htmlContent, docType) {
 window.GD = async function() {
   const btn = document.querySelector('.nbtn.sav');
 
-  // Also persist to IndexedDB
+  // Recoger datos del formulario
   const data = collectFormData();
   let ref = data.f_ref;
 
-  // Si no tiene referencia (número de cliente), pedir a Drive el siguiente
+  // Si no tiene número de cliente, avisar (debería haberse asignado en "+ Nuevo")
   if (!ref || ref.trim() === '') {
-    if (btn) { btn.innerHTML = '🔄 Obteniendo nº...'; btn.style.background = '#b36b00'; }
-
-    const driveInfo = await getDriveNextNumber();
-    if (driveInfo) {
-      const nextNum = driveInfo.nextNumber;
-      ref = String(nextNum);
-      // Poner el número en el campo de referencia
-      const refField = document.getElementById('f_ref');
-      if (refField) refField.value = ref;
-      data.f_ref = ref;
-
-      // Solo crear carpeta si needsCreate=true (no quedan carpetas vacías)
-      if (driveInfo.needsCreate) {
-        if (btn) btn.innerHTML = '📁 Creando carpeta...';
-        const folderResult = await createDriveFolder(nextNum);
-        if (folderResult && folderResult.success) {
-          showSyncStatus('📁 Carpeta ' + ref + ' creada en Drive');
-        } else {
-          showSyncStatus('⚠ Nº asignado pero error creando carpeta', 4000);
-        }
-      } else {
-        showSyncStatus('📁 Usando carpeta existente: ' + ref);
-      }
-
-      // Renombrar carpeta con nombre del cliente (siempre, nueva o existente)
-      const clientName = document.getElementById('f_nom') ? document.getElementById('f_nom').value : '';
-      if (clientName && clientName.trim()) {
-        if (btn) btn.innerHTML = '📝 Renombrando carpeta...';
-        const renameResult = await renameDriveFolder(nextNum, clientName);
-        if (renameResult && renameResult.success) {
-          showSyncStatus('📁 Carpeta renombrada: ' + ref + ' ' + clientName.toUpperCase());
-        }
-      }
-    } else {
-      ref = 'PRE-' + Date.now();
-      showSyncStatus('⚠ Sin conexión a Drive, referencia temporal', 4000);
-    }
+    showSyncStatus('⚠ Sin nº de cliente. Pulsa "+ Nuevo" primero', 4000);
+    return;
   }
 
   data.id = ref;
+  const numRef = parseInt(ref, 10);
 
   try {
+    // Guardar en IndexedDB
     await savePresupuesto(data);
+
+    // Renombrar carpeta en Drive con el nombre del cliente (si tiene nombre)
+    const clientName = document.getElementById('f_nom') ? document.getElementById('f_nom').value : '';
+    if (clientName && clientName.trim() && numRef >= 1000) {
+      // Usar driveInfo guardada o crear carpeta si es necesario
+      const driveInfo = window._driveInfo;
+      if (driveInfo && driveInfo.needsCreate) {
+        if (btn) btn.innerHTML = '📁 Creando carpeta...';
+        await createDriveFolder(numRef);
+        window._driveInfo.needsCreate = false; // Ya creada, no repetir
+      }
+      if (btn) btn.innerHTML = '📝 Renombrando carpeta...';
+      const renameResult = await renameDriveFolder(numRef, clientName);
+      if (renameResult && renameResult.success) {
+        showSyncStatus('📁 Carpeta: ' + ref + ' ' + clientName.toUpperCase());
+      }
+    }
 
     // Sync to Firebase if configured
     if (firebaseConfigured && window._fb) {
