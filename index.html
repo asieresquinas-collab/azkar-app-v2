@@ -352,25 +352,36 @@ function LD(){
 }
 
 
-function PA(){
-  window.print();
-  // After print, save to Drive
-  setTimeout(async () => {
-    const number = document.getElementById('f_ref') ? document.getElementById('f_ref').value : '';
-    const clientName = document.getElementById('f_nom') ? document.getElementById('f_nom').value : '';
-    if (number && number.trim()) {
-      // Get HTML of 3 pages (dossier + presupuesto + contrato)
-      const dossier = document.getElementById('page-dossier') ? document.getElementById('page-dossier').outerHTML : '';
-      const presupuesto = document.getElementById('page-presupuesto') ? document.getElementById('page-presupuesto').outerHTML : '';
-      const contrato = document.getElementById('page-contrato') ? document.getElementById('page-contrato').outerHTML : '';
-      const htmlContent = dossier + presupuesto + contrato;
+async function PA(){
+  const number = document.getElementById('f_ref') ? document.getElementById('f_ref').value : '';
+  const clientName = document.getElementById('f_nom') ? document.getElementById('f_nom').value : '';
+  const numRef = parseInt(number, 10);
 
-      const result = await saveToDrive(number, clientName, htmlContent, 'PRESUPUESTO');
-      if (result && result.success) {
-        showSyncStatus('💾 Guardado en Drive: ' + number + '_PRESUPUESTO.html');
-      }
+  // 1) Primero guardar en Drive (carpeta del cliente)
+  if (number && number.trim() && numRef >= 1000) {
+    showSyncStatus('⏳ Guardando en carpeta ' + number + '...');
+
+    // Renombrar carpeta con nombre del cliente
+    if (clientName && clientName.trim()) {
+      await renameDriveFolder(numRef, clientName);
     }
-  }, 1000);
+
+    // Guardar PRESUPUESTO
+    const presupuesto = document.getElementById('page-presupuesto') ? document.getElementById('page-presupuesto').outerHTML : '';
+    const res1 = await saveToDrive(number, clientName, presupuesto, 'PRESUPUESTO');
+
+    // Guardar CONTRATO
+    const contrato = document.getElementById('page-contrato') ? document.getElementById('page-contrato').outerHTML : '';
+    const res2 = await saveToDrive(number, clientName, contrato, 'CONTRATO');
+
+    const saved = (res1 && res1.success ? 1 : 0) + (res2 && res2.success ? 1 : 0);
+    showSyncStatus('✅ ' + saved + '/2 docs guardados en Drive → carpeta ' + number + ' ' + (clientName || '').toUpperCase());
+  } else {
+    showSyncStatus('⚠ Sin nº cliente. Pulsa "+ Nuevo" primero', 4000);
+  }
+
+  // 2) Luego imprimir
+  window.print();
 }
 /* beforeprint: browser fires this BEFORE rendering print — show all pages */
 var _printMode = 'pdf'; // 'pdf' or 'parte'
@@ -1339,7 +1350,7 @@ window.addEventListener('DOMContentLoaded', function() {
 });
 
 // === PARTE DE TRABAJO ===
-function PRINT_PARTE() {
+async function PRINT_PARTE() {
   // Collect data from presupuesto fields
   var nom = document.getElementById('f_nom');
   var fserv = document.getElementById('f_fserv');
@@ -1379,25 +1390,28 @@ function PRINT_PARTE() {
     rowsDiv.innerHTML = '<div style="padding:20px;text-align:center;color:#888;font-style:italic">No hay enseres registrados</div>';
   }
   
-  // Set print mode and print
+  const number = document.getElementById('f_ref') ? document.getElementById('f_ref').value : '';
+  const clientName = document.getElementById('f_nom') ? document.getElementById('f_nom').value : '';
+  const numRef = parseInt(number, 10);
+
+  // 1) Primero guardar PARTE en Drive (carpeta del cliente)
+  if (number && number.trim() && numRef >= 1000) {
+    showSyncStatus('⏳ Guardando parte en carpeta ' + number + '...');
+    const parte = document.getElementById('page-parte') ? document.getElementById('page-parte').outerHTML : '';
+    const result = await saveToDrive(number, clientName, parte, 'PARTE_TRABAJO');
+    if (result && result.success) {
+      showSyncStatus('✅ Parte de trabajo guardado en Drive → carpeta ' + number);
+    }
+  }
+
+  // 2) Luego imprimir
   _printMode = 'parte';
   document.body.classList.add('print-parte');
   window.print();
-  // Cleanup after print (timeout for mobile compatibility)
-  setTimeout(async function() {
+  // Cleanup after print
+  setTimeout(function() {
     document.body.classList.remove('print-parte');
     _printMode = 'pdf';
-
-    // Save to Drive
-    const number = document.getElementById('f_ref') ? document.getElementById('f_ref').value : '';
-    const clientName = document.getElementById('f_nom') ? document.getElementById('f_nom').value : '';
-    if (number && number.trim()) {
-      const parte = document.getElementById('page-parte') ? document.getElementById('page-parte').outerHTML : '';
-      const result = await saveToDrive(number, clientName, parte, 'PARTE_TRABAJO');
-      if (result && result.success) {
-        showSyncStatus('💾 Guardado en Drive: ' + number + '_PARTE_TRABAJO.html');
-      }
-    }
   }, 1000);
 }
 </script>
